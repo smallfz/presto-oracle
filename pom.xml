@@ -9,7 +9,6 @@
 	<groupId>ml.prestoconnectors</groupId>
 	<artifactId>presto-oracle</artifactId>
 	<description>Presto - Oracle Connector</description>
-	<packaging>jar</packaging>
 
 	<developers>
 		<developer>
@@ -35,7 +34,7 @@
 	</scm>
 
         <properties>
-                <dep.presto.version>0.147</dep.presto.version>
+                <dep.presto.version>0.171</dep.presto.version>
                 <dep.airlift.version>0.128</dep.airlift.version>
                 <dep.slice.version>0.21</dep.slice.version>
         </properties>
@@ -102,9 +101,9 @@
         </dependency>
 
 		<dependency>
-			<groupId>ojdbc6</groupId>
+     		<groupId>ojdbc6</groupId>
 			<artifactId>ojdbc6</artifactId>
-			<version>11.2.0.3</version>
+			<version>11.2</version>
 		</dependency>
 
 		<!-- Presto SPI -->
@@ -129,13 +128,6 @@
 			<scope>provided</scope>
 		</dependency>
 
-
-		<dependency>
-			<groupId>com.fasterxml.jackson.core</groupId>
-			<artifactId>jackson-annotations</artifactId>
-			<version>2.6.0-rc2</version>
-			<scope>provided</scope>
-		</dependency>
 
 		<dependency>
 			<groupId>com.fasterxml.jackson.core</groupId>

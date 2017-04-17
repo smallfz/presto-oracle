@@ -21,8 +21,11 @@ import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
+import static java.lang.String.format;
 
 import javax.annotation.Nullable;
 import javax.inject.Inject;
@@ -36,13 +39,31 @@ import com.facebook.presto.plugin.jdbc.BaseJdbcConfig;
 import com.facebook.presto.plugin.jdbc.JdbcColumnHandle;
 import com.facebook.presto.plugin.jdbc.JdbcConnectorId;
 import com.facebook.presto.plugin.jdbc.JdbcTableHandle;
+import com.facebook.presto.plugin.jdbc.JdbcOutputTableHandle;
+import static com.facebook.presto.plugin.jdbc.JdbcErrorCode.JDBC_ERROR;
+import static com.facebook.presto.spi.StandardErrorCode.NOT_FOUND;
+
+
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.SchemaTableName;
 import com.facebook.presto.spi.TableNotFoundException;
 import com.facebook.presto.spi.type.Type;
+// import com.facebook.presto.spi.ConnectorTableMetadata;
+import com.facebook.presto.spi.ColumnMetadata;
+import com.facebook.presto.spi.ConnectorSplitSource;
+import com.facebook.presto.spi.ConnectorTableMetadata;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.base.Joiner;
+import static com.google.common.collect.Maps.fromProperties;
+
+import static java.util.Locale.ENGLISH;
+
+import java.io.PrintWriter;
+import java.io.StringWriter;
+
+
 
 /**
  * Implementation of OracleClient. It describes table, schemas and columns behaviours.
@@ -209,4 +230,142 @@ public class OracleClient extends BaseJdbcClient {
 		String sqlType = super.toSqlType(type);
 		return sqlType;
 	}
+	
+	@Override
+	public JdbcOutputTableHandle beginInsertTable(ConnectorTableMetadata tableMetadata)
+    {
+        return beginWriteTable(tableMetadata);
+    }
+
+	@Override
+    public JdbcOutputTableHandle beginCreateTable(ConnectorTableMetadata tableMetadata)
+    {
+		return beginWriteTable(tableMetadata);
+    }
+	
+	protected JdbcOutputTableHandle beginWriteTable(ConnectorTableMetadata tableMetadata)
+	{
+        SchemaTableName schemaTableName = tableMetadata.getTable();
+        String schema = schemaTableName.getSchemaName();
+        String table = schemaTableName.getTableName();
+
+        if (!getSchemaNames().contains(schema)) {
+            throw new PrestoException(NOT_FOUND, "Schema not found: " + schema);
+        }
+
+        try (Connection connection = driver.connect(connectionUrl, connectionProperties)) {
+            boolean uppercase = connection.getMetaData().storesUpperCaseIdentifiers();
+            if (uppercase) {
+                schema = schema.toUpperCase(ENGLISH);
+                table = table.toUpperCase(ENGLISH);
+            }
+            String catalog = connection.getCatalog();
+
+            String temporaryName = "tmp_" + UUID.randomUUID().toString().replace("-", "");
+            if(temporaryName.length() > 30){
+            	temporaryName = temporaryName.substring(0, 30);
+            }
+            StringBuilder sql = new StringBuilder()
+                    .append("CREATE TABLE ")
+                    .append(quoted(catalog, schema, temporaryName))
+                    .append(" (");
+            ImmutableList.Builder<String> columnNames = ImmutableList.builder();
+            ImmutableList.Builder<Type> columnTypes = ImmutableList.builder();
+            ImmutableList.Builder<String> columnList = ImmutableList.builder();
+            for (ColumnMetadata column : tableMetadata.getColumns()) {
+                String columnName = column.getName();
+                if (uppercase) {
+                    columnName = columnName.toUpperCase(ENGLISH);
+                }
+                columnNames.add(columnName);
+                columnTypes.add(column.getType());
+                columnList.add(new StringBuilder()
+                        .append(quoted(columnName))
+                        .append(" ")
+                        .append(toSqlType(column.getType()))
+                        .toString());
+            }
+            Joiner.on(", ").appendTo(sql, columnList.build());
+            sql.append(")");
+            
+//            String msg = "";
+//            try{
+//            	msg = sql.toString()+"; " +tableMetadata.getOwner();
+//            }catch(Exception e){
+//            	msg = e.getMessage();
+//            }
+//            throw new PrestoException(JDBC_ERROR, msg);
+            
+            log.info("sql:");
+            log.info(sql.toString());
+            log.info("catalog: " + catalog);
+            log.info("schema: " + schema);
+            log.info("temporaryName: " + temporaryName);
+            log.info("connectionUrl: " + connectionUrl);
+            log.info("connectionProperties: ");
+            log.info(fromProperties(connectionProperties));
+            
+            execute(connection, sql.toString());
+            
+//            try{
+//            	HashMap<String, String> conProps = new HashMap<String, String>();
+//            	ImmutableList<String> colNames = columnNames.build();
+//            	ImmutableList<Type> colTypes = columnTypes.build();
+//            	JdbcOutputTableHandle _h = new JdbcOutputTableHandle("a","b", "c", "t", 
+//            			colNames,
+//            			colTypes, "c", "t1", conProps);
+//            }catch(NoSuchMethodError e){
+//            	log.error("NoSuchMethodError: " + e.getMessage());
+//            	e.printStackTrace();
+//            	StringWriter sw = new StringWriter();
+//            	PrintWriter pw = new PrintWriter(sw);
+//            	e.printStackTrace(pw);
+//            	pw.flush();
+//            	pw.close();
+//            	log.error(sw.toString());            	
+//            }
+
+            try{
+	            JdbcOutputTableHandle tableHandle = new JdbcOutputTableHandle(
+	                    connectorId,
+	                    catalog,
+	                    schema,
+	                    table,
+	                    columnNames.build(),
+	                    columnTypes.build(),
+	                    temporaryName,
+	                    connectionUrl,
+	                    fromProperties(connectionProperties));
+	            return tableHandle;
+            }catch(NoSuchMethodError e){
+            	throw new PrestoException(JDBC_ERROR, "new JdbcOutputTableHandle(): "+e.getMessage());
+            }
+        }
+        catch (SQLException e) {
+        	throw new PrestoException(JDBC_ERROR, "beginWriteTable(): "+e.getLocalizedMessage());
+            // throw new PrestoException(JDBC_ERROR, e);
+        }
+    }
+    
+	@Override
+    public void commitCreateTable(JdbcOutputTableHandle handle)
+    {
+        StringBuilder sql = new StringBuilder()
+                .append("ALTER TABLE ")
+                .append(quoted(handle.getCatalogName(), handle.getSchemaName(), handle.getTemporaryTableName()))
+                .append(" RENAME TO ")
+                .append(quoted(handle.getCatalogName(), "", handle.getTableName()));
+
+        log.info("-------- commitCreateTable -------");
+        log.info(sql.toString());
+        try (Connection connection = getConnection(handle)) {
+            execute(connection, sql.toString());
+        }
+        catch (SQLException e) {
+            throw new PrestoException(JDBC_ERROR, e);
+        }
+    }
+    
+    
+    
 }
