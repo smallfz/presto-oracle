@@ -48,6 +48,8 @@ import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.SchemaTableName;
 import com.facebook.presto.spi.TableNotFoundException;
 import com.facebook.presto.spi.type.Type;
+import com.facebook.presto.spi.type.VarcharType;
+import com.facebook.presto.spi.type.Varchars;
 // import com.facebook.presto.spi.ConnectorTableMetadata;
 import com.facebook.presto.spi.ColumnMetadata;
 import com.facebook.presto.spi.ConnectorSplitSource;
@@ -227,7 +229,15 @@ public class OracleClient extends BaseJdbcClient {
 	@Override
 	protected String toSqlType(Type type) {
 		//just for debug
-		String sqlType = super.toSqlType(type);
+		String sqlType = super.toSqlType(type).toLowerCase();
+		if(type instanceof VarcharType){
+			VarcharType vType = (VarcharType)type;
+			try{
+				return "varchar2("+vType.getLengthSafe()+")";
+			}catch(IllegalStateException e){
+				return "varchar2(4000)";
+			}
+		}
 		return sqlType;
 	}
 	
